@@ -996,7 +996,7 @@ function gotoSmallestUncorrectedGrade()
       end
       
       if putCurrentGradeInClipboard then
-         copyToClipboard(questionCurrentlyCorrected .. " " .. GRADE_SEP .. " ")
+         copyToClipboard(questionCurrentlyCorrected .. " " .. GRADE_SEP .. " " .. refGrades[questionCurrentlyCorrected])
       end
       if gradeExamQuestionCurrentlyCorrected ~= questionCurrentlyCorrected then
          local msg = ""
