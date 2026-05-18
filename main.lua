@@ -218,7 +218,7 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (images in landscape)", ["callback"] = "mergePDF", mode = 2});
   app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (exif rotated images)", ["callback"] = "mergePDF", mode = 3});
   app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
-  app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "F4"});
+  app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "<Control>Return"});
   app.registerUi({["menu"] = "GradeExam: go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
   app.registerUi({["menu"] = "GradeExam: copy comment to clipboard", ["callback"] = "addComment", ["accelerator"] = "F7"});
   app.registerUi({["menu"] = "GradeExam: put to clipboard all remaining grades to zero", ["callback"] = "allRemainingGradesToZeroInClipboard"});
