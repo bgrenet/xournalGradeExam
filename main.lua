@@ -1603,6 +1603,7 @@ function allRemainingGradesToZeroInClipboard()
       end
    end
    copyToClipboard(strToPaste)
+   app.activateAction("paste")
 end
 
 -- #### PDF manipulation
@@ -1892,6 +1893,7 @@ function addComment()
          end
       end
    end
+   app.activateAction("paste")
 end
 
 
