@@ -218,10 +218,13 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (images in landscape)", ["callback"] = "mergePDF", mode = 2});
   app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (exif rotated images)", ["callback"] = "mergePDF", mode = 3});
   app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
-  app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "<Control>Return"});
+  app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "<Alt>Return"});
   app.registerUi({["menu"] = "GradeExam: go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
   app.registerUi({["menu"] = "GradeExam: copy comment to clipboard", ["callback"] = "addComment", ["accelerator"] = "F7"});
-  app.registerUi({["menu"] = "GradeExam: put to clipboard all remaining grades to zero", ["callback"] = "allRemainingGradesToZeroInClipboard"});
+  app.registerUi({["menu"] = "GradeExam: paste zero grade for current question", ["callback"] = "pasteZeroGrade", ["accelerator"] = "<Alt>z"});
+  app.registerUi({["menu"] = "GradeExam: paste max grade for current question", ["callback"] = "pasteMaxGrade", ["accelerator"] = "<Alt>m"});
+  app.registerUi({["menu"] = "GradeExam: paste empty grade for current question", ["callback"] = "pasteEmptyGrade", ["accelerator"] = "<Alt>q"});
+  app.registerUi({["menu"] = "GradeExam: pasput zero grade for all remaining grades", ["callback"] = "allRemainingGradesToZeroInClipboard", ["accelerator"] = "<Alt><Shift>z"});
   app.registerUi({["menu"] = "GradeExam: export CSV and YAML", ["callback"] = "generateCSV", mode = 1});
   app.registerUi({["menu"] = "GradeExam: export CSV (percent formula) and YAML", ["callback"] = "generateCSV", mode = 2});
   app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
@@ -996,7 +999,11 @@ function gotoSmallestUncorrectedGrade()
       end
       
       if putCurrentGradeInClipboard then
-         copyToClipboard(questionCurrentlyCorrected .. " " .. GRADE_SEP .. " " .. refGrades[questionCurrentlyCorrected])
+          local grade = ''
+          if refgrades ~= nil then
+              grade = refGrades[questionCurrentlyCorrected]
+          end
+         copyToClipboard(questionCurrentlyCorrected .. " " .. GRADE_SEP .. " " .. grade)
       end
       if gradeExamQuestionCurrentlyCorrected ~= questionCurrentlyCorrected then
          local msg = ""
@@ -1031,6 +1038,34 @@ function gotoSmallestUncorrectedGrade()
       end
    end
 end
+
+function pasteZeroGrade()
+    if gradeExamQuestionCurrentlyCorrected == nil then
+         app.openDialog("No question currently getting corrected.", {"Ok"}, nil)
+     else
+         copyToClipboard(gradeExamQuestionCurrentlyCorrected .. " " .. GRADE_SEP .. " 0")
+         app.activateAction("paste")
+     end
+end
+function pasteEmptyGrade()
+    if gradeExamQuestionCurrentlyCorrected == nil then
+         app.openDialog("No question currently getting corrected.", {"Ok"}, nil)
+     else
+         copyToClipboard(gradeExamQuestionCurrentlyCorrected .. " " .. GRADE_SEP .. " ")
+         app.activateAction("paste")
+     end
+end
+-- Only works right after gotoNextUncorrectedGrade since it uses the value currently in the clipboard
+function pasteMaxGrade()
+    if gradeExamQuestionCurrentlyCorrected == nil then
+         app.openDialog("No question currently getting corrected.", {"Ok"}, nil)
+     else
+         app.activateAction("paste")
+     end
+end
+
+
+
 
 function gotoSmallestUncorrectedGradeAndSave()
    app.activateAction("save")
