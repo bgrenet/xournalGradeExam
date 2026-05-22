@@ -219,10 +219,12 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (exif rotated images)", ["callback"] = "mergePDF", mode = 3});
   app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
   app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "<Alt>Return"});
+  app.registerUi({["menu"] = " --- ", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "<Alt>s"});
   app.registerUi({["menu"] = "GradeExam: go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
   app.registerUi({["menu"] = "GradeExam: copy comment to clipboard", ["callback"] = "addComment", ["accelerator"] = "F7"});
   app.registerUi({["menu"] = "GradeExam: paste zero grade for current question", ["callback"] = "pasteZeroGrade", ["accelerator"] = "<Alt>z"});
   app.registerUi({["menu"] = "GradeExam: paste max grade for current question", ["callback"] = "pasteMaxGrade", ["accelerator"] = "<Alt>m"});
+  app.registerUi({["menu"] = " --- ", ["callback"] = "pasteMaxGrade", ["accelerator"] = "<Alt>d"});
   app.registerUi({["menu"] = "GradeExam: paste empty grade for current question", ["callback"] = "pasteEmptyGrade", ["accelerator"] = "<Alt>q"});
   app.registerUi({["menu"] = "GradeExam: pasput zero grade for all remaining grades", ["callback"] = "allRemainingGradesToZeroInClipboard", ["accelerator"] = "<Alt><Shift>z"});
   app.registerUi({["menu"] = "GradeExam: export CSV and YAML", ["callback"] = "generateCSV", mode = 1});
@@ -1000,7 +1002,7 @@ function gotoSmallestUncorrectedGrade()
       
       if putCurrentGradeInClipboard then
           local grade = ''
-          if refgrades ~= nil then
+          if refGrades ~= nil then
               grade = refGrades[questionCurrentlyCorrected]
           end
          copyToClipboard(questionCurrentlyCorrected .. " " .. GRADE_SEP .. " " .. grade)
@@ -1885,7 +1887,7 @@ function addComment()
                for i, x in ipairs(allCommentsForThisQuestionNoNewLines) do
                    if x[2] == trim(resultRofi) then
                       print(i, resultRofi, x[3])
-                      copyToClipboard(x[3])
+                      copyToClipboard('\n' .. x[3])
                       break
                   end
                end
