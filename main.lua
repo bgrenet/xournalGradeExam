@@ -1523,7 +1523,7 @@ end
 -- Set the student of the current page based on the reference file
 function createStudent()
    recordPositionHistory()
-   local allTexts = getAllTexts()
+   local allTexts = getAllTextsIfEfficient()
    local allTextsInPreamble = extractTextsInPreamble(allTexts)
    local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
    if next(referenceStudentsArray) == nil then
@@ -1533,14 +1533,16 @@ function createStudent()
       return
    end
    -- remove already assigned students from rofi
-   for _,currText in ipairs(allTexts) do
-      local maybeName = isStudentName(currText.text)
-      if maybeName ~= nil then
-          local i = index_in_array(referenceStudentsArray, maybeName)
-          if i ~= nil then
-              table.remove(referenceStudentsArray, i)
-          end
-      end
+   if allText ~= nil then
+    for _,currText in ipairs(allTexts) do
+       local maybeName = isStudentName(currText.text)
+       if maybeName ~= nil then
+           local i = index_in_array(referenceStudentsArray, maybeName)
+           if i ~= nil then
+               table.remove(referenceStudentsArray, i)
+           end
+       end
+    end
    end
    --
    local selectedStudent, ret, errorStr = rofiLikeSelect(referenceStudentsArray)
