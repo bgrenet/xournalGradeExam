@@ -30,6 +30,16 @@ function dump(o)
    end
 end
 
+function filter(l, f)
+   local r = {}
+   for i, x in ipairs(l) do
+      if f(x) then
+         table.insert(r, x)
+      end
+   end
+   return r
+end
+
 function get_file_name(file)
       return file:match("[^/\\]*$")
 end
@@ -42,6 +52,41 @@ function index_in_array(a, x)
    end
    return nil
 end
+
+function size_of_object(o)
+   local i = 0
+   for k,v in pairs(o) do
+      i = i + 1
+   end
+   return i
+end
+
+function max_value(o)
+   local x = nil
+   for k,v in pairs(o) do
+      if x == nil then
+         x = v
+      else
+         if v > x then
+            x = v
+         end
+      end
+   end
+   return x
+end
+
+function fill_array_until_size(a, size, x)
+   local r = {}
+   for i=1, size do
+      if i <= #a then
+         r[i] = a[i]
+      else
+         r[i] = x
+      end
+   end
+   return r
+end
+
 
 function isUnix()
    return package.config:sub(1,1) == '/'
@@ -110,6 +155,7 @@ function split_student_name_in_columns(student)
 end
 
 
+-- Turn an integer (starting from 1) into a letter to represent the corresponding column in a spreadsheet
 local function int_to_spreadsheet_col(n)
     local s = ""
     while n > 0 do
@@ -200,6 +246,125 @@ function normalizeLatin(str)
 
 end
 
+
+-- ========== YAML ==========
+local function is_array(t)
+  local i = 1
+  for k, _ in pairs(t) do
+    if k ~= i then return false end
+    i = i + 1
+  end
+  return true
+end
+
+local function indent(level)
+  return string.rep("  ", level)
+end
+
+local function dump_string(str, level)
+  local ind = indent(level)
+  local lines = { "|-" }
+
+  for line in str:gmatch("([^\n]*)\n?") do
+    if line ~= "" then
+      table.insert(lines, ind .. "  " .. line)
+    end
+  end
+
+  return table.concat(lines, "\n")
+end
+
+local function sorted_keys(t)
+  local keys = {}
+  for k in pairs(t) do table.insert(keys, k) end
+  table.sort(keys)
+  return keys
+end
+
+local function to_yaml(value, level)
+  level = level or 0
+  local ind = indent(level)
+
+  if type(value) == "table" then
+    local lines = {}
+
+    if is_array(value) then
+      -- LIST
+      for _, v in ipairs(value) do
+        if type(v) == "table" and not is_array(v) then
+          -- dictionary inside list → inline first key
+          local keys = sorted_keys(v)
+          local first_key = keys[1]
+          local first_val = v[first_key]
+
+          -- first key inline
+          if type(first_val) == "table" then
+            table.insert(lines, ind .. "- " .. first_key .. ":")
+            table.insert(lines, to_yaml(first_val, level + 2))
+          elseif type(first_val) == "string" then
+            table.insert(lines, ind .. "- " .. first_key .. ": " .. dump_string(first_val, level + 2))
+          else
+            table.insert(lines, ind .. "- " .. first_key .. ": " .. tostring(first_val))
+          end
+
+          -- remaining keys
+          for i = 2, #keys do
+            local k = keys[i]
+            local val = v[k]
+
+            if type(val) == "table" then
+              table.insert(lines, indent(level + 1) .. k .. ":")
+              table.insert(lines, to_yaml(val, level + 2))
+            elseif type(val) == "string" then
+              table.insert(lines, indent(level + 1) .. k .. ": " .. dump_string(val, level + 2))
+            else
+              table.insert(lines, indent(level + 1) .. k .. ": " .. tostring(val))
+            end
+          end
+
+        elseif type(v) == "table" then
+          -- nested list
+          table.insert(lines, ind .. "-")
+          table.insert(lines, to_yaml(v, level + 1))
+
+        elseif type(v) == "string" then
+          table.insert(lines, ind .. "- " .. dump_string(v, level + 1))
+        else
+          table.insert(lines, ind .. "- " .. tostring(v))
+        end
+      end
+
+    else
+      -- DICTIONARY
+      for _, k in ipairs(sorted_keys(value)) do
+        local v = value[k]
+
+        if type(v) == "table" then
+          table.insert(lines, ind .. k .. ":")
+          table.insert(lines, to_yaml(v, level + 1))
+        elseif type(v) == "string" then
+          table.insert(lines, ind .. k .. ": " .. dump_string(v, level + 1))
+        else
+          table.insert(lines, ind .. k .. ": " .. tostring(v))
+        end
+      end
+    end
+
+    return table.concat(lines, "\n")
+  end
+
+  -- scalars
+  if type(value) == "string" then
+    return ind .. dump_string(value, level)
+  else
+    return ind .. tostring(value)
+  end
+end
+-- ========== END YAML ==========
+
+
+
+
 -- Absolute scroll is not doing what the documentation claims it's doing,
 -- https://github.com/xournalpp/xournalpp/issues/7120
 -- So let's implement my version
@@ -225,6 +390,7 @@ function initUi()
   app.registerUi({["menu"] = "Export CSV and YAML", ["callback"] = "generateCSV", mode = 1});
   app.registerUi({["menu"] = "Export CSV (percent formula) and YAML", ["callback"] = "generateCSV", mode = 2});
   app.registerUi({["menu"] = "Export pdf", ["callback"] = "exportPdf"});
+  app.registerUi({["menu"] = "Copy all settings", ["callback"] = "copyAllSettings"});
 
   app.registerUi({["menu"] = "Advanced: next student", ["callback"] = "gotoNextStudent"});
   app.registerUi({["menu"] = "Advanced: 1st uncorrected grade current student", ["callback"] = "gotoLastGrade"});
@@ -696,6 +862,436 @@ function findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
    end
 end
 
+function getCsvSymbolSum()
+   local LANG = os.getenv("LANG")
+   local lang = nil
+   if LANG ~= nil then
+      lang = string.sub(LANG .. "  ", 1, 2) -- Add spaces to ensure size is at least 2
+   end
+   if lang == "fr" then
+      return "SOMME"
+   elseif lang == "de" then
+      return "SUMME"
+   elseif lang == "es" then
+      return "SUMA"
+   else
+      return "SUM"
+   end
+end
+
+-- This function extracts a structured element (basically the exported YAML) that can be used to navigate etc
+-- Mode may be nil (no raw grade conversion), 1 (grade as points) or 2 (grade as percentage.)
+function extractYamlLikeStructure(allTexts, mode)
+   local point_mode = 1 -- alias for the mode 1, easier to read
+   local percent_formula_mode = 2 -- alias for the mode 2, easier to read
+   local allTexts = allTexts or getAllTexts()
+   local docStructure = app.getDocumentStructure()
+   local numPages = #docStructure.pages
+
+   -- Main structure that we will enrich. Type written like in typescript (yeah, doing typescript these days).
+   local YAMLlike = {
+      -- Questions found in the whole exam. Ordered via the bareme list if available and otherwise we try to order
+      -- them appropriately (e.g. based on dots like 21.5 > 1.2, alphabetically if not numbers)
+      -- {
+      --   question: string, -- The name of the question
+      --   max_grade?: string, -- If a bareme is present for this quesiton, this item contains the grade given in the bareme
+      -- }[]
+      questions = {},
+      -- Map a column name (e.g. email...) to the **0-index** (most scripts exploiting this will be python I presume, let's make their life easy) of the element in name_columns.
+      -- Record<string, integer>
+      all_column_names = {},
+      -- integer, final number of columns in student names.
+      nb_columns = 0,
+      -- integer: number of pages in the whole document
+      document_nb_pages = numPages,
+      -- Reference grades are present (i.e. grades are written before the first student)
+      -- reference_grades_are_present: boolean
+      reference_grades_are_present = false,
+      -- Grade of students, ordered via the *students: list if available and in the order of appearance
+      -- in the document otherwise.
+      -- {
+      --   name: string, -- Name of the student (after correction by *students:)
+      --   name_columns: string[], -- Name decomposed into columns, we also include empty strings so that all students have the same number of columns
+      --   exam_found: boolean, -- If an exam was found for this student
+      --   pdf_file_name_export: string, -- Name of the PDF file that would be exported for this student (without folder name)
+      --   pages: number[], -- List of all pages of the document that belong to this student.
+      --   -- List of all grades/… for each question. They are listed in the exact same order (no skip)
+      --   -- as the YAMLlike.questions field:
+      --   questions: { 
+      --     question: string, -- Name of the question
+      --     found_grade: boolean, -- If a grade was found (possibly empty)
+      --     empty_grade?: boolean, -- Only present when found_grade=true, says if the grade was empty
+      --     grade_raw?: string, -- Raw string containing what the user typed (not available when found_grade is false)
+      --     grade?: number, -- Grade, when convertible to a number and when exporting in either point or percentage mode (result will differ based on the mode)
+      --     position: {page: number, x: number, y: number}, -- Position of the grade in the document
+      --     comments?: string[], -- List of comments written below questions, when available
+      --   }[]
+      -- }[]
+      students = {},
+      -- Messages to display when finding unusual things
+      warning_messages = {}, -- string[]
+      -- Stores the settings configured via PREFIX_SETTING
+      settings = { -- Record<string, string>
+         removeNoGradeCells = "false",
+         keepStudentsNoExam = "true",
+         CsvAddStats = "true",
+         CsvSymbolSum = getCsvSymbolSum(),
+      },
+   }
+   -- allGrades[student][grade] = value;
+   local allGrades = {}
+   -- allGradePositions[student][grade] = {page: number, x: number, y: number};
+   local allGradePositions = {}
+   -- allComments[student][grade] = ["array of", "comments"];
+   local allComments = {}
+   -- studentInfo[student] = {
+   --   pages: number[], -- Keep track of the pages in the document that belong to this user (list of pages allow multiple pages of a user to be spread across the document).
+   -- }
+   local studentInfo = {}
+   -- If no student, it is the bareme, other grades may be expressible as a percentage of this value
+   local bareme = "Max points"
+   local currentStudents = { bareme }
+   local currentStudentStartingPage = -1
+   local tmpCurrentStudents = { bareme } -- Name before renaming them
+   local stillParsingBareme = true -- To know if we are already reading student stuff
+   -- We gather all questions by order of appearance
+   local questionNamesHash = {} -- check efficiently if question already added
+   -- Order questions properly 
+   local questionNamesArray = {}
+   -- Same for students
+   local studentHash = {}
+   local studentArray = {}
+   -- Optionally, if we add at the beginning of the document a list (or multiple lists)
+   -- of students called like *students: followed by a new line and
+   -- students, one per line, then we will try to write the grades in
+   -- this order (if a student appears in the reference but has no
+   -- grade, an empty line will be added with the reference
+   -- name). When a match is found, the reference name is kept. To
+   -- find matches, since it is easy to make a mistake in a name, we
+   -- read the name of the student currently graded, if an entry
+   -- exactly match its name we pick it otherwise we separate it based
+   -- on SEP_NAME, try to match the first column, if there is not
+   -- exactly one match we try with the second etc.
+   local referenceStudentsHash = {} -- This is simply a map "reference student name" -> true
+   local studentWithExam = {} -- To know if a student got no grade because they have no exam at all or because we forgot to grade it
+   local lastVisitedPage = 0
+   local emptyPages = {} -- To print a warning if too many pages are empty (eg. forgot to correct one student because we forgot to write his name)
+   -- We explore all pages of the document
+   for _, currText in ipairs(allTexts) do
+      -- Check if we forgot to annotate some pages
+      if lastVisitedPage ~= currText.page then
+         for i=lastVisitedPage+1,currText.page-1 do
+            table.insert(emptyPages, i)
+         end
+         lastVisitedPage = currText.page
+      end
+      -- Try to check if it is the list of all students (=starts with PREFIX_REF_STUDENTS)
+      if string.sub(currText.text,1,#PREFIX_REF_STUDENTS) == PREFIX_REF_STUDENTS then
+         local firstLine = 0
+         for currLine in iterate_on_lines(currText.text) do
+            if firstLine == 0 then
+               -- That's the first line, check if there are some column names (emails…)
+               local restOfLine = trim(currLine:sub(#PREFIX_REF_STUDENTS+1))
+               if restOfLine ~= "" then
+                  local all_columns = split_student_name_in_columns(restOfLine)
+                  for i, c in ipairs(all_columns) do
+                     local col = trim(c)
+                     if col ~= "" then
+                        YAMLlike.all_column_names[col] = i - 1 -- We index from 0 to make python plugins life easier.
+                     end
+                  end
+               end
+            else
+               -- This is a student
+               referenceStudentsHash[currLine] = true
+               allGrades[currLine] = allGrades[currLine] or {}
+               allGradePositions[currLine] = allGradePositions[currLine] or {}
+               if studentHash[currLine] == nil then
+                  studentHash[currLine] = 1 -- Use it like a set based on a hash table
+                  table.insert(studentArray,currLine)
+               end
+            end
+            firstLine = firstLine + 1
+         end
+      end 
+      -- Check if this is a setting (=starts with PREFIX_SETTING)
+      if string.sub(currText.text,1,#PREFIX_SETTING) == PREFIX_SETTING then
+         -- Allow multiple settings in the same box
+         for line in iterate_on_lines(currText.text) do
+            local res = string.find(line, "=")
+            if res ~= nil then
+               -- We trim white spaces
+               local param = trim(string.sub(line, 1, res-1))
+               local value = trim(string.sub(line, res + 1, -1))
+               YAMLlike.settings[param] = value
+            end
+         end
+      end
+      -- Try to check if new student (=starts with PREFIX_NAME)
+      if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME then
+         if stillParsingBareme and next(questionNamesArray) ~= nil then
+            YAMLlike.reference_grades_are_present = true
+         end
+         stillParsingBareme = false
+         -- We try to see if we find him in the list of reference students
+         -- so we give him a temporary name until we know if it is in the list
+         local tmpCurrentStudent = string.sub(currText.text,#PREFIX_NAME+1,-1)
+         local currentStudent, _, errors = findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
+         if currText.page ~= currentStudentStartingPage then
+            -- This is a new exam, we don't have two students with the same homework
+            -- We update the studentInfo[currentStudent].pages position of the previous students
+            -- WARNING: if you change this code, make sure to update the duplicate that deals with the last student
+            -- at the end of the for loop (not super clean, but simple to reason)
+            for i, previousStudent in ipairs(currentStudents) do
+               if previousStudent ~= bareme then
+                  studentInfo[previousStudent] = studentInfo[previousStudent] or {}
+                  studentInfo[previousStudent].pages = studentInfo[previousStudent].pages or {}
+                  for p = currentStudentStartingPage, currText.page-1 do
+                     table.insert(studentInfo[previousStudent].pages, p)
+                  end
+               end
+            end
+            -- Then we reset the list of current students
+            currentStudents = {}
+            currentStudentStartingPage = currText.page
+            tmpCurrentStudent = {}
+         end
+         table.insert(currentStudents, currentStudent)
+         table.insert(tmpCurrentStudents, tmpCurrentStudent)
+         if errors ~= nil then
+            -- We print an error only if there is a reference list, otherwise meaningless
+            if next(referenceStudentsHash) ~= nil then -- next(foo) == nil iff foo is empty
+               table.insert(YAMLlike.warning_messages, errors)
+            end
+         end
+         studentWithExam[currentStudent] = true
+         allGrades[currentStudent] = allGrades[currentStudent] or {}
+         allGradePositions[currentStudent] = allGradePositions[currentStudent] or {}
+         if studentHash[currentStudent] == nil then
+            studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
+            table.insert(studentArray,currentStudent)
+         end
+      end
+      -- Then we check for new grades (they look like "1.2 ~> 100" depending on separator)
+      local res = string.find(currText.text, GRADE_SEP)
+      if res ~= nil then
+         -- We allow multiple grades separated by newlines. Any line that comes after a grade is exported as a comment, newlines are replaced with white space
+         -- but add an empty line to create a new comment (add them via rofi)
+         local currentQuestionComment = nil
+         for line in iterate_on_lines(currText.text) do
+            local res = string.find(line, GRADE_SEP)
+            if res ~= nil then
+               -- We trim white spaces
+               local question = trim(string.sub(line, 1, res-1))
+               currentQuestionComment = question
+               local points = trim(string.sub(line, res + #GRADE_SEP, -1))
+               for i,currentStudent in ipairs(currentStudents) do
+                  -- Create "Max points" if needed
+                  if allGrades[currentStudent] == nil then
+                     allGrades[currentStudent] = {}
+                  end
+                  if allGradePositions[currentStudent] == nil then
+                     allGradePositions[currentStudent] = {}
+                  end
+                  if allGrades[currentStudent][question] then
+                     local msg = "WARNING: the student " .. currentStudent
+                     if tmpCurrentStudents[i] ~= currentStudent then
+                        msg = msg .. " (aka " .. tmpCurrentStudents[i] .. ")"
+                     end
+                     msg = msg .. " has question '" .. question .. "' specified twice.\n"
+                     table.insert(YAMLlike.warning_messages, msg)
+                  end
+                  allGrades[currentStudent][question] = points
+                  allGradePositions[currentStudent][question] = {
+                     page=currText.page,
+                     x=currText.x,
+                     y=currText.y
+                  }
+                  -- Maintain proper ordering
+                  if questionNamesHash[question] == nil then
+                     questionNamesHash[question] = 1 -- Use it like a set based on a hash table
+                     table.insert(questionNamesArray,question)
+                     -- Print warning if this question was not already added in the bareme
+                     if not stillParsingBareme and YAMLlike.reference_grades_are_present then
+                        table.insert(YAMLlike.warning_messages, "WARNING: the question '" .. question .. "' is not in the list of reference questions")
+                     end
+                  end
+                  if studentHash[currentStudent] == nil then
+                     studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
+                     table.insert(studentArray,currentStudent)
+                  end
+               end
+            else
+               if currentQuestionComment ~= nil then
+                  local comment = trim(line)
+                  for i,currentStudent in ipairs(currentStudents) do
+                     if allComments[currentStudent] == nil then
+                        allComments[currentStudent] = {}
+                     end 
+                     if allComments[currentStudent][currentQuestionComment] == nil then
+                        allComments[currentStudent][currentQuestionComment] = {""}
+                     end
+                     if comment == "" then
+                        table.insert(allComments[currentStudent][currentQuestionComment], "")
+                     else
+                        local i = #(allComments[currentStudent][currentQuestionComment])
+                        local c = allComments[currentStudent][currentQuestionComment][i]
+                        allComments[currentStudent][currentQuestionComment][i] = c .. (c == "" and "" or " ") .. comment
+                     end                     
+                  end
+               end
+            end
+         end
+      end
+   end
+   -- We update the studentInfo[currentStudent].pages position of the last students
+   -- WARNING: if you change this code, make sure to update the duplicate that deals with the other students
+   -- at the end of the for loop (not super clean, but simple to reason about)
+   for i, previousStudent in ipairs(currentStudents) do
+      if previousStudent ~= bareme then
+         studentInfo[previousStudent] = studentInfo[previousStudent] or {}
+         studentInfo[previousStudent].pages = studentInfo[previousStudent].pages or {}
+         for p = currentStudentStartingPage, numPages do
+            table.insert(studentInfo[previousStudent].pages, p)
+         end
+      end
+   end   
+   -- We re-order grades based on the reference grades etc
+   local refGrades = getReferenceGrades(allTexts)
+   table.sort(questionNamesArray, function (gradeA, gradeB) return sortGrades(refGrades, gradeA, gradeB) end)
+   -- First, we check how many columns are configured in names, so that *:42__Alice__Foo
+   -- creates 3 columns, one with the number 42, one with Alice, and one with Foo
+   YAMLlike.nb_columns = (max_value(YAMLlike.all_column_names) or 0) + 1
+   local SEP_NAME_REGEXP = SEP_NAME:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%0")
+   for i=1,#studentArray do
+      YAMLlike.nb_columns = math.max(YAMLlike.nb_columns, #(split_student_name_in_columns(studentArray[i])))
+   end
+   -- We print the grade names
+   for i=1,#questionNamesArray do
+      table.insert(YAMLlike.questions, {
+                      question  = questionNamesArray[i],
+                      max_grade = (YAMLlike.reference_grades_are_present and allGrades[bareme][questionNamesArray[i]] ~= nil)
+                         and allGrades[bareme][questionNamesArray[i]]
+                         or nil
+      })
+   end
+   -- We show the grades for each student
+   local missing_grades_message = ""
+   local missing_all_grades_message = ""
+   local warning_cant_convert_to_grade = ""
+   for i=1,#studentArray do
+      local student = studentArray[i]
+      if student ~= bareme then
+         -- We cut student into multiple columns (ID, name…) if necessary
+         local c = 0
+         local student_cols = split_student_name_in_columns(student)
+         local YAMLstudentToAdd = {
+            name = student,
+            name_columns = fill_array_until_size(student_cols, YAMLlike.nb_columns, ""),
+            exam_found = studentWithExam[student] ~= nil,
+            pdf_file_name_export = sanitizeFilename(student) .. ".pdf",
+            pages = exam_found and studentInfo[student].pages or nil,
+            questions = {},
+         }
+         local missing_grades_current_student = ""
+         for j=1,#questionNamesArray do
+            local YAMLQuestionToAdd = {}
+            local gr = "NO GRADE"
+            local question = questionNamesArray[j]
+            local found_grade = false
+            if allGrades[student][question] ~= nil then
+               gr = allGrades[student][question]
+               found_grade = true
+            end
+            if not found_grade then
+               missing_grades_current_student = missing_grades_current_student .. (missing_grades_current_student == "" and "" or ", ") .. question
+            end
+            YAMLQuestionToAdd.question = question
+            YAMLQuestionToAdd.found_grade = found_grade
+            if found_grade then
+               if gr == "" then
+                  YAMLQuestionToAdd.empty_grade = true
+               else
+                  YAMLQuestionToAdd.empty_grade = false
+               end
+            end
+            if found_grade then
+               YAMLQuestionToAdd.grade_raw = gr
+               YAMLQuestionToAdd.position = allGradePositions[student][question]
+            end
+            if mode == point_mode then -- For the bareme no need to write it this way
+               if found_grade then
+                  local gr_nb = tonumber(gr)
+                  if gr_nb ~= nil then
+                     YAMLQuestionToAdd.grade = gr
+                  else
+                     warning_cant_convert_to_grade = warning_cant_convert_to_grade .. "; student " .. question .. ", grade " .. gr
+                  end
+               end
+            elseif mode == percent_formula_mode then
+               if found_grade then
+                  YAMLQuestionToAdd.grade_percent = gr
+                  local gr_nb = tonumber(gr)
+                  local bareme_nb = allGrades[bareme] ~= nil and allGrades[bareme][question] ~= nil and tonumber(allGrades[bareme][question]) or nil
+                  if gr_nb ~= nil and bareme_nb ~= nil then
+                     YAMLQuestionToAdd.grade = gr * bareme_nb / 100
+                  else
+                     local bareme_str = allGrades[bareme] ~= nil and allGrades[bareme][question] ~= nil and allGrades[bareme][question] or "missing reference grade"
+                     warning_cant_convert_to_grade = warning_cant_convert_to_grade .. "; student " .. question .. ", grade " .. gr .. " = " .. bareme_str
+                  end
+               end
+            end
+            if allComments[student] ~= nil and allComments[student][question] ~= nil then
+               for _, comment in ipairs(allComments[student][question]) do
+                  if YAMLQuestionToAdd.comments == nil then
+                     YAMLQuestionToAdd.comments = {}
+                  end
+                  table.insert(YAMLQuestionToAdd.comments, comment)
+               end
+            end
+            table.insert(YAMLstudentToAdd.questions, YAMLQuestionToAdd)
+         end
+         if missing_grades_current_student ~= "" then
+            if studentWithExam[student] then
+               missing_grades_message = missing_grades_message .. (missing_grades_message == "" and "" or ", ") .. student .. " (" .. missing_grades_current_student .. ")"
+            else
+               missing_all_grades_message = missing_all_grades_message .. (missing_all_grades_message == "" and "" or ", ") .. student
+            end
+         end
+         table.insert(YAMLlike.students, YAMLstudentToAdd)
+      end
+   end
+   if warning_cant_convert_to_grade ~= "" then
+      table.insert(YAMLlike.warning_messages, "WARNING: some grades in percentage could not be turned into grades in points: " .. warning_cant_convert_to_grade)
+   end
+   if missing_grades_message ~= "" then
+      table.insert(YAMLlike.warning_messages, "WARNING: the following students are missing grades for the following questions: " .. missing_grades_message)
+   end
+   if missing_all_grades_message ~= "" then
+      table.insert(YAMLlike.warning_messages, "WARNING: we found no exam for the following students: " .. missing_all_grades_message)
+   end
+   if #emptyPages > 0 then
+      local msg = 'WARNING: ' .. #emptyPages .. ' pages were not annotated. Make sure you have not forgotten to grade some students (you can remove blank pages or add dummy text on blank pages to say you saw them). The list of pages with no annotation is as follows: '
+      for x,p in ipairs(emptyPages) do
+         msg = msg .. (x > 1 and ', ' or '') .. p
+      end
+      table.insert(YAMLlike.warning_messages, msg)
+   end
+   return YAMLlike
+end
+
+
+function extractYamlLikeStructureIfEfficient(allTexts)
+   if allTexts == nil then
+      allTexts = getAllTextsIfEfficient()
+      if allTexts == nil then
+         return nil
+      end
+   end
+   return extractYamlLikeStructure(allTexts)
+end
+
+
 -- Goto the next student, and return -1 if no student is found and the page otherwise.
 -- The "allTexts" string is optional, only use it to save time if  required 
 function gotoNextStudent(allTexts, dontRecordHistory)
@@ -797,6 +1393,7 @@ end
 -- grades is a array+hash table, where the hash maps question name to an objects points/page/x/y
 -- This returns two things: the grade to go to in format {points, page, x, y}, and the name of the highest already graded grade, maybe nil if none is graded
 -- or nil, nil if grades is empty
+-- TODO: this function is now outdated, extractYamlLikeStructureIfEfficient should be used instead.
 function selectHighestGradeToGo(refGrades, grades)
    print(".. selectHighestGradeToGo", dump(grades))
    if refGrades == nil then
@@ -911,93 +1508,52 @@ gradeExamQuestionCurrentlyCorrected = nil
 -- This goes to the smallest uncorrected grade in the whole exam. This way we skip students that we have already corrected
 function gotoSmallestUncorrectedGrade()
    recordPositionHistory()
-   local allTexts = getAllTextsIfEfficient()
-   if allTexts == nil then
+
+   
+   local YAMLlike = extractYamlLikeStructureIfEfficient()
+   if YAMLlike == nil then
       -- We don't implement it on the old API because it is just too inefficient
       gotoLastGradeNextStudent(true)
    else
-      local refGrades = getReferenceGrades(allTexts)
-      local refGradesAvailable = true
-      if #refGrades == 0 then
-         -- If refGrades are not available, we still try to generate some based on already written grades
-         refGradesAvailable = false
-         refGrades = {}
-         for _,currentText in ipairs(allTexts) do
-            extractGradesFromText(currentText.text, refGrades, nil, true)
-         end
-         table.sort(refGrades, function (gradeA, gradeB) return sortGrades({}, gradeA, gradeB) end)
-      end
-      local currentPageToGo = nil
-      local currentSmallestGrade = -1 -- can't use nil since nil may be use if students wrote no grades
-      local currentStudentPage = -1
-      local currentStudentGrades = {}
-      table.insert(allTexts, {text = "", page = 0}) -- We add a dummy text at the end that will play the a last student to take into account the actual last student
-      local nbTexts = #allTexts
-      for i,currentText in ipairs(allTexts) do
-         if isStudentName(currentText.text) or i == nbTexts then -- Otherwise it will skip the last student
-            print("Currently looking for ", currentText.text, i == nbTexts)
-            -- Check if we are not already considering this exam because two students are on the same exam:
-            if currentStudentPage ~= currentText.page or i == nbTexts then
-               -- First we check if the previous student was not the preamble and was better
-               if currentStudentPage >= 1 then
-                  local lastGradeGoto, highestAlreadyGradedGrade = selectHighestGradeToGo(refGrades, currentStudentGrades)
-                  print("We found", dump(lastGradeGoto), highestAlreadyGradedGrade)
-                  if currentSmallestGrade == -1 or sortGrades(refGrades, highestAlreadyGradedGrade, currentSmallestGrade) then
-                     -- We found a student with a strictly smaller already graded grade!
-                     currentSmallestGrade = highestAlreadyGradedGrade
-                     -- Check if there is at least a grade to go (if the student has zero grade this might be null)
-                     -- in which case we move to the student
-                     if lastGradeGoto == nil then
-                        currentPageToGo = {page = currentStudentPage, x = 0, y = 0}
-                     else
-                        currentPageToGo = lastGradeGoto
+      -- Check where to go
+      local currentPageToGo, questionCurrentlyCorrected = (function () -- Fake nested break via anonymous function
+            for i, q in ipairs(YAMLlike.questions) do
+               -- Check if question q is graded for all students:
+               for j, s in ipairs(YAMLlike.students) do
+                  -- Only deal with students that have a written exam
+                  if s.exam_found then
+                     local sq = s.questions[i]
+                     if not sq.found_grade or sq.empty_grade then
+                        if YAMLlike.reference_grades_are_present and q.max_grade == nil then
+                           app.openDialog("Weird, the question " .. q.question .. " is not part of the reference list of questions. Have you misspelled it? If not, add it to the reference list of questions.", {"Ok"}, nil)
+                        end
+                        if sq.position ~= nil then
+                           return sq.position, q.question
+                        else
+                           -- First question is empty, go to first page of student
+                           if i == 1 then
+                              return {page = (s.pages or {0})[0] or 0, x = 0, y = 0}, q.question
+                           else
+                              -- We go to the previous question in the list.
+                              -- Should never be nil, since the previous question should be found_grade and
+                              -- not empty_grade
+                              return s.questions[i-1].position, q.question
+                           end 
+                        end
                      end
                   end
                end
-               -- Then we move to this page if it is the first student
-               if currentPageToGo == nil and i ~= nbTexts then
-                  currentPageToGo = {page = currentText.page, x = 0, y = 0}
-               end
-               -- Otherwise just restart current counters etc
-               currentStudentPage = currentText.page
-               currentStudentGrades = {}
             end
-         end
-         -- Add grades if we are not in the preamble
-         if currentStudentPage >= 1 then
-            currentStudentGrades = extractGradesFromText(currentText.text, currentStudentGrades, {page = currentText.page, x = currentText.x, y = currentText.y})
-         end
-      end
-      if currentPageToGo == nil then
-         currentPageToGo = {page = 0, x = 0, y = 0}
-      end
+            -- All questions are corrected… or reference grades are incomplete
+            return {page = 0, x = 0, y = 0}, "?.?"
+      end)()
+      -- We go there
       scrollTo(currentPageToGo.page, currentPageToGo.x, currentPageToGo.y)
-      -- Determine the question that we are correcting now
-      local questionCurrentlyCorrected = nil
-      if currentSmallestGrade == nil then
-         if #refGrades == 0 then
-            questionCurrentlyCorrected = "1.1"
-         else
-            questionCurrentlyCorrected = refGrades[1]
-         end
-      else
-         local i = index_in_array(refGrades, currentSmallestGrade)
-         if (i == nil) then
-            questionCurrentlyCorrected = "ERROR: weird, this should never occur, please report a bug."
-            print(questionCurrentlyCorrected)
-         else
-            if i >= #refGrades then
-               -- I guess this occurs either when you finished or when reference grades are incomplete
-               questionCurrentlyCorrected = "?.?"
-            else
-               questionCurrentlyCorrected = refGrades[i+1]
-            end
-         end
-      end
-      
+      -- Copy the grade in the clipboard
       if putCurrentGradeInClipboard then
          copyToClipboard(questionCurrentlyCorrected .. " " .. GRADE_SEP .. " ")
       end
+      -- Print a message if we started correcting a new question
       if gradeExamQuestionCurrentlyCorrected ~= questionCurrentlyCorrected then
          local msg = ""
          if gradeExamQuestionCurrentlyCorrected == nil then
@@ -1007,13 +1563,13 @@ function gotoSmallestUncorrectedGrade()
             else
                msg = msg .. "Now, add a new text area next to the question containing something like '1.1 ~> 4' (remove quotes) to attribute 4 points to the question 1.1. Depending on the export mode, the number will be interpreted as points or percentage of the maximum number of points so that '1.1 ~> 100' gives all points to this question."
             end
-            msg = msg .. "\n\nIf the student misordered the question and added a different question/exercise X before, add an empty grade for the question X, and we will get back to it when it will be the time to correct this question/exercise (no need to add an empty grade for all the questions of the exercise X, only the first misplaced question matters). Then, press F4 to move to the next student."
-            if not refGradesAvailable then
-               msg = msg .. "\n\nFor a better experience (especially when students write their questions in a bad ordering, or to be able to easily say that all remaining grades are 0 via 'Plugin > GradeExam: put to clipboard all remaining grades to zero'), you certainly want to **add a list of reference grades** (same syntax) before the first exam on a new empty page to list all available questions and their maximum number of points."
+            msg = msg .. "\n\nIf the student mis-ordered the question and added a different question/exercise X before, add an empty grade for the question X, and we will get back to it when it will be the time to correct this question/exercise (no need to add an empty grade for all the questions of the exercise X, only the first misplaced question matters). Then, press F4 to move to the next student."
+            if not YAMLlike.reference_grades_are_present then
+               msg = msg .. "\n\nFor a better experience (especially when students write their questions in a bad ordering, or to be able to easily say that all remaining grades are 0 via 'Plugin > GradeExam > Put to clipboard all remaining grades to zero'), you certainly want to **add a list of reference grades** (same syntax) before the first exam on a new empty page to list all available questions and their maximum number of points."
             end
          else
             if questionCurrentlyCorrected == "?.?" then
-               if refGradesAvailable then
+               if YAMLlike.reference_grades_are_present then
                   msg = "You finished to correct all exams, congrats! Now time to export to CSV ;-) (make sure to read warnings to ensure you forgot nothing, and press ENTER to close the message if too many warnings are shown)"
                else
                   msg = "You finished to correct the question " .. gradeExamQuestionCurrentlyCorrected .. ", but we are not yet sure what is the name of the next question to correct (please, provide a reference list of questions on a blank page before the first exam (same syntax where points represent the maximum number of points) to help us to navigate properly. You can also just paste the current clipboard and change the ?.? with the name of the new question to correct, but be warned that reference questions are still helpful, especially when student has re-ordered questions or to put 0 to all remaining questions."
@@ -1040,346 +1596,122 @@ end
 -- mode = 1 is just copy/paste grades as it
 -- mode = 2 is write a percent formula based on the max grade
 function generateCSV(mode)
-   local percent_formula = 2 -- alias for the mode 2, easier to read
-   local warning_messages = {} -- Messages to display when finding unusual things
-   -- We start to gather all texts
-   local allTexts = getAllTexts()
-   -- Stores the settings configured via PREFIX_SETTING
-   local settings = {
-      removeNoGradeCells = "false", -- If "true", the cells with "no grade" will actually be empty
-   }
-   -- Not sure why, but print does not work with latest version (appimage), so let's
-   -- debug by writing in a file
-   local docStructure = app.getDocumentStructure()
-   local numPages = #docStructure.pages
-   -- allGrades[student][grade] = value;
-   local allGrades = {}
-   -- allComments[student][grade] = ["array of", "comments"];
-   local allComments = {}
-   -- If no student, it is the bareme, other grades may be expressible as a percentage of this value
-   local bareme = "Max points"
-   local currentStudents = { bareme }
-   local currentStudentStartingPage = -1
-   local tmpCurrentStudents = { bareme } -- Name before renaming them
-   local stillParsingBareme = true -- To know if we are already reading student stuff
-   local baremeIsPresent = false
-   -- We gather all questions by order of appearance
-   local questionNamesHash = {} -- check efficiently if question already added
-   -- Order questions properly 
-   local questionNamesArray = {}
-   -- Same for students
-   local studentHash = {}
-   local studentArray = {}
-   -- Optionally, if we add at the beginning of the document a list (or multiple lists)
-   -- of students called like *students: followed by a new line and
-   -- students, one per line, then we will try to write the grades in
-   -- this order (if a student appears in the reference but has no
-   -- grade, an empty line will be added with the reference
-   -- name). When a match is found, the reference name is kept. To
-   -- find matches, since it is easy to make a mistake in a name, we
-   -- read the name of the student currently graded, if an entry
-   -- exactly match its name we pick it otherwise we separate it based
-   -- on SEP_NAME, try to match the first column, if there is not
-   -- exactly one match we try with the second etc.
-   local referenceStudentsHash = {} -- This is simply a map "reference student name" -> true
-   local studentWithExam = {} -- To know if a student got no grade because they have no exam at all or because we forgot to grade it
-   -- In mode percent_formula, we want a bareme
-   if mode == percent_formula then
-      allGrades[bareme] = {}
-      studentHash[bareme] = 1 -- Use it like a set based on a hash table
-      table.insert(studentArray,bareme)
-      baremeIsPresent = true
-   end
-   local lastVisitedPage = 0
-   local emptyPages = {} -- To print a warning if too many pages are empty (eg. forgot to correct one student because we forgot to write his name)
-   -- We explore all pages of the document
-   for _, currText in ipairs(allTexts) do
-      -- Check if we forgot to annotate some pages
-      if lastVisitedPage ~= currText.page then
-         for i=lastVisitedPage+1,currText.page-1 do
-            table.insert(emptyPages, i)
-         end
-         lastVisitedPage = currText.page
-      end
-      -- Try to check if it is the list of all students (=starts with PREFIX_REF_STUDENTS)
-      if string.sub(currText.text,1,#PREFIX_REF_STUDENTS) == PREFIX_REF_STUDENTS then
-         local firstLine = 0
-         for currLine in iterate_on_lines(currText.text) do
-            if firstLine > 0 then
-               referenceStudentsHash[currLine] = true
-               allGrades[currLine] = allGrades[currLine] or {}
-               if studentHash[currLine] == nil then
-                  studentHash[currLine] = 1 -- Use it like a set based on a hash table
-                  table.insert(studentArray,currLine)
-               end
-            end
-            firstLine = firstLine + 1
-         end
-      end 
-      -- Check if this is a setting (=starts with PREFIX_SETTING)
-      if string.sub(currText.text,1,#PREFIX_SETTING) == PREFIX_SETTING then
-         -- Allow multiple settings in the same box
-         for line in iterate_on_lines(currText.text) do
-            local res = string.find(line, "=")
-            if res ~= nil then
-               -- We trim white spaces
-               local param = trim(string.sub(line, 1, res-1))
-               local value = trim(string.sub(line, res + 1, -1))
-               settings[param] = value
-            end
-         end
-      end
-      -- Try to check if new student (=starts with PREFIX_NAME)
-      if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME then
-         if stillParsingBareme and next(questionNamesArray) ~= nil then
-            baremeIsPresent = true
-         end
-         stillParsingBareme = false
-         -- We try to see if we find him in the list of reference students
-         -- so we give him a temporary name until we know if it is in the list
-         local tmpCurrentStudent = string.sub(currText.text,#PREFIX_NAME+1,-1)
-         local currentStudent, _, errors = findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
-         if currText.page ~= currentStudentStartingPage then
-            -- This is a new exam, we don't have two students with the same homework
-            currentStudents = {}
-            currentStudentStartingPage = currText.page
-            tmpCurrentStudent = {}
-         end
-         table.insert(currentStudents, currentStudent)
-         table.insert(tmpCurrentStudents, tmpCurrentStudent)
-         if errors ~= nil then
-            -- We print an error only if there is a reference list, otherwise meaningless
-            if next(referenceStudentsHash) ~= nil then -- next(foo) == nil iff foo is empty
-               table.insert(warning_messages, errors)
-            end
-         end
-         studentWithExam[currentStudent] = true
-         allGrades[currentStudent] = allGrades[currentStudent] or {}
-         if studentHash[currentStudent] == nil then
-            studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
-            table.insert(studentArray,currentStudent)
-         end
-      end
-      -- Then we check for new grades (they look like "1.2 ~> 100" depending on separator)
-      local res = string.find(currText.text, GRADE_SEP)
-      if res ~= nil then
-         -- We allow multiple grades separated by newlines. Any line that comes after a grade is exported as a comment, newlines are replaced with white space
-         -- but add an empty line to create a new comment (add them via rofi)
-         local currentQuestionComment = nil
-         for line in iterate_on_lines(currText.text) do
-            local res = string.find(line, GRADE_SEP)
-            if res ~= nil then
-               -- We trim white spaces
-               local question = trim(string.sub(line, 1, res-1))
-               currentQuestionComment = question
-               local points = trim(string.sub(line, res + #GRADE_SEP, -1))
-               for i,currentStudent in ipairs(currentStudents) do
-                  -- Create "Max points" if needed
-                  if allGrades[currentStudent] == nil then
-                     allGrades[currentStudent] = {}
-                  end
-                  if allGrades[currentStudent][question] then
-                     local msg = "WARNING: the student " .. currentStudent
-                     if tmpCurrentStudents[i] ~= currentStudent then
-                        msg = msg .. " (aka " .. tmpCurrentStudents[i] .. ")"
-                     end
-                     msg = msg .. " has question '" .. question .. "' specified twice.\n"
-                     table.insert(warning_messages, msg)
-                  end
-                  allGrades[currentStudent][question] = points
-                  -- Maintain proper ordering
-                  if questionNamesHash[question] == nil then
-                     questionNamesHash[question] = 1 -- Use it like a set based on a hash table
-                     table.insert(questionNamesArray,question)
-                     -- Print warning if this question was not already added in the bareme
-                     if not stillParsingBareme and baremeIsPresent then
-                        table.insert(warning_messages, "WARNING: the question '" .. question .. "' is not in the list of reference questions")
-                     end
-                  end
-                  if studentHash[currentStudent] == nil then
-                     studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
-                     table.insert(studentArray,currentStudent)
-                  end
-               end
-            else
-               if currentQuestionComment ~= nil then
-                  local comment = trim(line)
-                  for i,currentStudent in ipairs(currentStudents) do
-                     if allComments[currentStudent] == nil then
-                        allComments[currentStudent] = {}
-                     end 
-                     if allComments[currentStudent][currentQuestionComment] == nil then
-                        allComments[currentStudent][currentQuestionComment] = {""}
-                     end
-                     if comment == "" then
-                        table.insert(allComments[currentStudent][currentQuestionComment], "")
-                     else
-                        local i = #(allComments[currentStudent][currentQuestionComment])
-                        local c = allComments[currentStudent][currentQuestionComment][i]
-                        allComments[currentStudent][currentQuestionComment][i] = c .. (c == "" and "" or " ") .. comment
-                     end                     
-                  end
-               end
-            end
-         end
-      end
-   end
-   -- We re-order grades based on the reference grades etc
-   local refGrades = getReferenceGrades(allTexts)
-   table.sort(questionNamesArray, function (gradeA, gradeB) return sortGrades(refGrades, gradeA, gradeB) end)
+   local point_mode = 1 -- alias for the mode 1, easier to read
+   local percent_formula_mode = 2 -- alias for the mode 2, easier to read
+
+   local YAMLlike = extractYamlLikeStructure(nil, mode)
+   
+   -- First we save the YAML file
+   local yml = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades_with_comments.yml"
+   ymlFile = io.open(yml, "w")
+   ymlFile:write(to_yaml(YAMLlike))
+   ymlFile:close()
+
    -- We determine the name of the file to write grades
    local csv = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades.csv"
    file = io.open(csv, "w")
-   local yml = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades_with_comments.yml"
-   ymlFile = io.open(yml, "w")
+   
+   -- Then, we write the logs
    local logs = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades_log.txt"
    logfile = io.open(logs, "w")
-   -- First, we check how many columns are configured in names, so that *:42__Alice__Foo
-   -- creates 3 columns, one with the number 42, one with Alice, and one with Foo
-   local nb_cols = 1
-   local SEP_NAME_REGEXP = SEP_NAME:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%0")
-   for i=1,#studentArray do
-      nb_cols = math.max(nb_cols, #(split_student_name_in_columns(studentArray[i]))+1)
-   end
-   -- We print the grade names
-   file:write("Questions")
-   ymlFile:write("questions:\n")
-   for i=2,nb_cols do
-      file:write(CSV_SEP)
-   end
-   for i=1,#questionNamesArray do
-      file:write(CSV_SEP)
-      file:write(questionNamesArray[i])
-      ymlFile:write("  - question: |-\n")
-      ymlFile:write("      " .. questionNamesArray[i] .. "\n")
-      if baremeIsPresent then
-         if allGrades[bareme][questionNamesArray[i]] ~= nil then
-            ymlFile:write("    max_grade: " .. allGrades[bareme][questionNamesArray[i]] .. "\n")
-         end
+   local logMsg = "The CSV file (based on " .. #filter(YAMLlike.students, function (s) return s.exam_found end) .. " corrected exams) has been saved in " .. csv .. ". Make sure to import it with the English locale in Libre Office Calc or numbers with decimals won't be imported properly." .. (mode == percent_formula_mode and " Also make sure to import the CSV with 'Evaluate formulas' or the formulas will not be evaluated." or "")
+   if #YAMLlike.warning_messages > 0 then
+      logMsg = logMsg .. "\n\nDuring the production of the CSV file, we found the following warnings  (**press ENTER to dismiss this message** in case it is so long that you can\'t see the OK button, see " .. get_file_name(logs) .. " for the full logs):"
+      for _,w in ipairs(YAMLlike.warning_messages) do
+         logMsg = logMsg .. "\n\n" .. w
       end
+   end
+   print(logMsg .. '\n')
+   logfile:write(logMsg)
+   logfile:close()
+   
+   -- We write the question names in the CSV
+   file:write("Questions")
+   for i=2,YAMLlike.nb_columns do
+      -- Space for student names
+      file:write(CSV_SEP)
+   end
+   for i, q in ipairs(YAMLlike.questions) do
+      file:write(CSV_SEP)
+      file:write(q.question)
+   end
+   if YAMLlike.settings.CsvAddStats ~= "false" then
+      file:write(CSV_SEP)
+      file:write("Total")
    end   
    file:write("\n")
-   -- We show the grades for each student
-   local missing_grades_message = ""
-   local missing_all_grades_message = ""
-   local warning_cant_convert_to_grade = ""
-   ymlFile:write("students:\n")
-   for i=1,#studentArray do
-      local student = studentArray[i]
-      if student ~= bareme then
-         ymlFile:write("  - name: |-\n")
-         ymlFile:write("      " .. student .. "\n")
-         ymlFile:write("    exam_found: " .. (studentWithExam[student] ~= nil and "true" or "false") .. "\n")
-         ymlFile:write("    pdf_file_name_export: |-\n")
-         ymlFile:write("      " .. sanitizeFilename(student) .. ".pdf\n")
-         ymlFile:write("    questions:\n")
-      end
-      -- We cut student into multiple columns (ID, name…) if necessary
-      local c = 0
-      local student_cols = split_student_name_in_columns(student)
-      for c=1,nb_cols do
-         if c > 1 then
-            file:write(CSV_SEP)
-         end
-         if student_cols[c] ~= nil then
-            file:write(student_cols[c])
-         end
-      end
-      local missing_grades_current_student = ""
-      for j=1,#questionNamesArray do
+
+   -- We write the bareme if present in the CSV
+   if YAMLlike.reference_grades_are_present or mode == percent_formula_mode then
+      file:write("Points")
+      -- Space for student names
+      for i=2,YAMLlike.nb_columns do
          file:write(CSV_SEP)
-         local gr = "NO GRADE"
-         local found_grade = false
-         if allGrades[student][questionNamesArray[j]] ~= nil then
-            gr = allGrades[student][questionNamesArray[j]]
-            found_grade = true
+      end
+      for i, q in ipairs(YAMLlike.questions) do
+         file:write(CSV_SEP)
+         file:write(q.max_grade or "???")
+      end
+
+      if YAMLlike.settings.CsvAddStats ~= "false" then
+         file:write(CSV_SEP)
+         file:write("=" .. YAMLlike.settings.CsvSymbolSum .. "(" .. int_to_spreadsheet_col(1 + YAMLlike.nb_columns) .. "2:" .. int_to_spreadsheet_col(#YAMLlike.questions + YAMLlike.nb_columns) .. "2)")
+      end
+      
+      
+      file:write("\n")
+   end
+
+   -- We show the grades for each student
+   for i, s in ipairs(YAMLlike.students) do
+      if YAMLlike.settings.keepStudentsNoExam ~= "false" or s.exam_found then
+         -- Write the student name (columns)
+         for c, col in ipairs(s.name_columns) do
+            if c > 1 then
+               file:write(CSV_SEP)
+            end
+            file:write(col)
          end
-         if not found_grade then
-            missing_grades_current_student = missing_grades_current_student .. (missing_grades_current_student == "" and "" or ", ") .. questionNamesArray[j]
-         end
-         -- | allows us to avoid to quote anything. Simplest solution I think
-         -- (also to copy/paste back in text files without parsers)!
-         if student ~= bareme then
-            ymlFile:write("      - question: |-\n")
-            ymlFile:write("          ".. questionNamesArray[j] .. "\n")
-         end
-         if mode == 1 or i == 1 then -- For the bareme no need to write it this way
-            if settings.removeNoGradeCells == "true" and found_grade == false then
-               -- We write nothing if no grade is given
+         -- Write the grades
+         for j, q in ipairs(s.questions) do
+            file:write(CSV_SEP)
+            local grade_to_write = ""
+            if q.found_grade and not q.empty_grade then
+               grade_to_write = q.grade_raw
             else
-               file:write(gr)
-            end
-            if student ~= bareme and found_grade then
-               ymlFile:write("        grade: " .. gr .. "\n")
-            end
-         elseif mode == percent_formula then
-            if settings.removeNoGradeCells == "true" and found_grade == false then
-               -- We write nothing if no grade is given
-            else
-               file:write("=" .. gr .. "*" .. int_to_spreadsheet_col(j + nb_cols) .. "2/100")
-            end
-            if student ~= bareme then
-               if found_grade then
-                  ymlFile:write("        grade_percent: " .. gr .. "\n")
-                  local gr_nb = tonumber(gr)
-                  local bareme_nb = allGrades[bareme] ~= nil and allGrades[bareme][questionNamesArray[j]] ~= nil and tonumber(allGrades[bareme][questionNamesArray[j]]) or nil
-                  if gr_nb ~= nil and bareme_nb ~= nil then
-                     ymlFile:write("        grade: " .. (gr * bareme_nb / 100) .. "\n")
-                  else
-                     local bareme_str = allGrades[bareme] ~= nil and allGrades[bareme][questionNamesArray[j]] ~= nil and allGrades[bareme][questionNamesArray[j]] or "missing reference grade"
-                     warning_cant_convert_to_grade = warning_cant_convert_to_grade .. "; student " .. questionNamesArray[j] .. ", grade " .. gr .. " = " .. bareme_str
-                  end
+               if YAMLlike.settings.removeNoGradeCells ~= "true" then
+                  grade_to_write = "NO GRADE"
                end
             end
-         end
-         if student ~= bareme then
-            ymlFile:write("        comments:\n")
-            if allComments[student] ~= nil and allComments[student][questionNamesArray[j]] ~= nil then
-               for _, comment in ipairs(allComments[student][questionNamesArray[j]]) do
-                  ymlFile:write("          - |-\n")
-                  ymlFile:write("            " .. comment .. "\n")
+            if mode ~= percent_formula_mode then
+               if YAMLlike.settings.removeNoGradeCells == "true" and q.found_grade == false then
+                  -- We write nothing if no grade is given
+               else
+                  file:write(grade_to_write)
                end
+            else
+               if YAMLlike.settings.removeNoGradeCells == "true" and q.found_grade == false then
+                  -- We write nothing if no grade is given
+               else
+                  file:write("=" .. (grade_to_write) .. "*" .. int_to_spreadsheet_col(j + YAMLlike.nb_columns) .. "2/100")
+               end            
             end
          end
-      end
-      if missing_grades_current_student ~= "" and student ~= bareme then
-         if studentWithExam[student] then
-            missing_grades_message = missing_grades_message .. (missing_grades_message == "" and "" or ", ") .. student .. " (" .. missing_grades_current_student .. ")"
-         else
-            missing_all_grades_message = missing_all_grades_message .. (missing_all_grades_message == "" and "" or ", ") .. student
+         if YAMLlike.settings.CsvAddStats ~= "false" then
+            file:write(CSV_SEP)
+            local line = 1 + i
+            if YAMLlike.reference_grades_are_present or mode == percent_formula_mode then
+               line = line + 1
+            end
+            file:write("=" .. YAMLlike.settings.CsvSymbolSum .. "(" .. int_to_spreadsheet_col(1 + YAMLlike.nb_columns) .. line .. ":" .. int_to_spreadsheet_col(#YAMLlike.questions + YAMLlike.nb_columns) .. line .. ")")
          end
+         file:write('\n')
       end
-      file:write('\n')
-   end
-   if warning_cant_convert_to_grade ~= "" then
-      table.insert(warning_messages, "WARNING: some grades in percentage could not be turned into grades in points: " .. warning_cant_convert_to_grade)
-   end
-   if missing_grades_message ~= "" then
-      table.insert(warning_messages, "WARNING: the following students are missing grades for the following questions: " .. missing_grades_message)
-   end
-   if missing_all_grades_message ~= "" then
-      table.insert(warning_messages, "WARNING: we found no exam for the following students: " .. missing_all_grades_message)
    end
    file:close()
-   ymlFile:close()
-   if #emptyPages > 0 then
-      local msg = 'WARNING: ' .. #emptyPages .. ' pages were not annotated. Make sure you have not forgotten to grade some students (you can remove blank pages or add dummy text on blank pages to say you saw them). The list of pages with no annotation is as follows: '
-      for x,p in ipairs(emptyPages) do
-         msg = msg .. (x > 1 and ', ' or '') .. p
-      end
-      table.insert(warning_messages, msg)
-   end
-   local msg = "The CSV file (based on " .. tablelength(studentWithExam) .. " corrected exams) has been saved in " .. csv .. ". Make sure to import it with the English locale in Libre Office Calc or numbers with decimals won't be imported properly." .. (mode == percent_formula and " Also make sure to import the CSV with 'Evaluate formulas' or the formulas will not be evaluated." or "")
-   if #warning_messages > 0 then
-      msg = msg .. "\n\nDuring the production of the CSV file, we found the following warnings  (**press ENTER to dismiss this message** in case it is so long that you can\'t see the OK button, see " .. get_file_name(logs) .. " for the full logs):"
-      for _,w in ipairs(warning_messages) do
-         msg = msg .. "\n\n" .. w
-      end
-   end
-   print(msg .. '\n')
-   app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
-   logfile:write(msg)
-   logfile:close()
+
+   -- We show the logs to the user
+   app.openDialog(logMsg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
 end
 
 
@@ -1398,17 +1730,19 @@ function debug()
    -- logfile:write(dump(textsOnLayer))
    -- logfile:close()
    -- print(dump(app.getTexts("selection")))
-   app.setCurrentPage(30)
-   app.scrollToPage(30)
+   -- app.setCurrentPage(30)
+   -- app.scrollToPage(30)
    -- I want to center the view on this new text:
    -- app.addTexts({texts={{
    --                     text="Hello World",font={name="Noto Sans Mono Medium", size=8.0},color=0x1259b9,x = 30.38,y = 735.35
    -- }}})
-   app.refreshPage() -- Hope it helps, but no. At least text is written.
-   local zoom = app.getZoom()
-   app.setZoom(1)
-   app.scrollToPos(30.38, 735.35) -- Absolute mode.
-   app.setZoom(zoom)
+   -- app.refreshPage() -- Hope it helps, but no. At least text is written.
+   -- local zoom = app.getZoom()
+   -- app.setZoom(1)
+   -- app.scrollToPos(30.38, 735.35) -- Absolute mode.
+   -- app.setZoom(zoom)
+   local x = extractYamlLikeStructure()
+   print(to_yaml(x))
 end
 
 -- Automatically export
@@ -1874,3 +2208,11 @@ function addComment()
 end
 
 
+function copyAllSettings()
+   local YAMLlike = extractYamlLikeStructure()
+   local s = PREFIX_SETTING .. "\n"
+   for k, v in pairs(YAMLlike.settings) do
+      s = s .. k .. "=" .. v .. "\n"
+   end
+   copyToClipboard(s)
+end
